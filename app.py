@@ -1,15 +1,15 @@
 import io
 import os
 import pandas as pd
+import psycopg2
+from sshtunnel import SSHTunnelForwarder
 import streamlit as st
-from sqlalchemy import create_engine
 
 st.set_page_config(
     page_title="Informes Contables Odoo", page_icon="📊", layout="centered"
 )
 st.title("📊 Exportador de Apuntes Contables")
 
-# Autenticación simple
 password = st.text_input("Contraseña de acceso:", type="password")
 
 if password == os.getenv("APP_PASSWORD"):
@@ -23,21 +23,37 @@ if password == os.getenv("APP_PASSWORD"):
         if start_date > end_date:
             st.error("La fecha de inicio no puede ser posterior a la fecha fin.")
         else:
-            with st.spinner("Extrayendo datos de Odoo..."):
-                engine = None
+            with st.spinner("Extrayendo datos de Odoo mediante SQL directo..."):
+                tunnel = None
+                conn = None
                 try:
-                    host = os.getenv("DB_HOST")
-                    port = os.getenv("DB_PORT", "5432")
-                    dbname = os.getenv("DB_NAME")
-                    user = os.getenv("DB_USER")
-                    password_db = os.getenv("DB_PASS")
+                    # Configurar variables de SSH y BD
+                    ssh_host = os.getenv("SSH_HOST")  # Ej: processcontroldev-fitnesspark-main-4984370.dev.odoo.com
+                    ssh_user = os.getenv("SSH_USER")  # Tu usuario SSH de Odoo.sh
+                    ssh_pass = os.getenv("SSH_PASS")  # Tu contraseña SSH (o clave)
 
-                    # Cadena URI exacta con SSL que SQLAlchemy entiende sin lanzar Warnings
-                    db_url = f"postgresql://{user}:{password_db}@{host}:{port}/{dbname}?sslmode=require"
+                    db_name = os.getenv("DB_NAME")
+                    db_user = os.getenv("DB_USER")
+                    db_pass = os.getenv("DB_PASS")
 
-                    engine = create_engine(
-                        db_url,
-                        connect_args={"connect_timeout": 10},
+                    # 1. Crear túnel SSH en segundo plano
+                    tunnel = SSHTunnelForwarder(
+                        (ssh_host, 22),
+                        ssh_username=ssh_user,
+                        ssh_password=ssh_pass,
+                        remote_bind_address=("127.0.0.1", 5432),
+                    )
+                    tunnel.start()
+
+                    # 2. Conectar a PostgreSQL localmente a través del puerto asignado al túnel
+                    conn = psycopg2.connect(
+                        host="127.0.0.1",
+                        port=tunnel.local_bind_port,
+                        database=db_name,
+                        user=db_user,
+                        password=db_pass,
+                        sslmode="disable",
+                        connect_timeout=10,
                     )
 
                     query = """
@@ -63,21 +79,16 @@ if password == os.getenv("APP_PASSWORD"):
                     ORDER BY aml.date ASC
                     """
 
-                    # Carga limpia usando Engine (elimina el UserWarning)
-                    df = pd.read_sql_query(query, engine, params=(start_date, end_date))
+                    df = pd.read_sql_query(query, conn, params=(start_date, end_date))
 
                     if df.empty:
-                        st.warning(
-                            "No se encontraron apuntes contables en ese rango de fechas."
-                        )
+                        st.warning("No se encontraron apuntes contables en ese rango de fechas.")
                     else:
                         csv_buffer = io.StringIO()
                         df.to_csv(csv_buffer, index=False, sep="|")
                         csv_bytes = csv_buffer.getvalue().encode("utf-8")
 
-                        st.success(
-                            f"¡Informe generado con éxito! Total registros: **{len(df):,}**"
-                        )
+                        st.success(f"¡Informe generado con éxito! Total registros: **{len(df):,}**")
 
                         st.download_button(
                             label="⬇️ Descargar CSV para Auditores",
@@ -89,8 +100,10 @@ if password == os.getenv("APP_PASSWORD"):
                 except Exception as e:
                     st.error(f"Error de conexión o consulta: {e}")
                 finally:
-                    if engine:
-                        engine.dispose()
+                    if conn:
+                        conn.close()
+                    if tunnel:
+                        tunnel.stop()
 
 elif password != "":
     st.error("Contraseña incorrecta.")
