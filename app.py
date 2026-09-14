@@ -1,18 +1,29 @@
 import io
 import os
 import pandas as pd
-import psycopg2
 import streamlit as st
+from sqlalchemy import create_engine
 
 st.set_page_config(
     page_title="Informes Contables Odoo", page_icon="📊", layout="centered"
 )
 st.title("📊 Exportador de Apuntes Contables")
 
+
+def get_secret(key, default=""):
+    """Busca primero en variables de entorno y luego en Streamlit Secrets."""
+    if key in os.environ:
+        return os.environ[key]
+    if hasattr(st, "secrets") and key in st.secrets:
+        return st.secrets[key]
+    return default
+
+
 # Autenticación simple
 password = st.text_input("Contraseña de acceso:", type="password")
+app_password = get_secret("APP_PASSWORD")
 
-if password == os.getenv("APP_PASSWORD"):
+if password and password == app_password:
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("Fecha Inicio")
@@ -24,16 +35,19 @@ if password == os.getenv("APP_PASSWORD"):
             st.error("La fecha de inicio no puede ser posterior a la fecha fin.")
         else:
             with st.spinner("Extrayendo datos de Odoo..."):
-                conn = None
+                engine = None
                 try:
-                    conn = psycopg2.connect(
-                        host=os.getenv("DB_HOST"),
-                        database=os.getenv("DB_NAME"),
-                        user=os.getenv("DB_USER"),
-                        password=os.getenv("DB_PASS"),
-                        port=os.getenv("DB_PORT", "5432"),
-                        connect_timeout=10,
-                    )
+                    db_user = get_secret("DB_USER")
+                    db_pass = get_secret("DB_PASS")
+                    db_host = get_secret("DB_HOST")
+                    db_port = get_secret("DB_PORT", "5432")
+                    db_name = get_secret("DB_NAME")
+                    ssl_mode = get_secret("DB_SSLMODE", "require")
+
+                    # URL de conexión con SQLAlchemy para PostgreSQL
+                    db_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}?sslmode={ssl_mode}"
+                    
+                    engine = create_engine(db_url, connect_args={"connect_timeout": 10})
 
                     query = """
                     SELECT 
@@ -58,15 +72,14 @@ if password == os.getenv("APP_PASSWORD"):
                     ORDER BY aml.date ASC
                     """
 
-                    # Carga eficiente
-                    df = pd.read_sql_query(query, conn, params=(start_date, end_date))
+                    # Carga mediante SQLAlchemy Engine
+                    df = pd.read_sql_query(query, engine, params=(start_date, end_date))
 
                     if df.empty:
                         st.warning(
                             "No se encontraron apuntes contables en ese rango de fechas."
                         )
                     else:
-                        # Generación limpia del CSV en memoria
                         csv_buffer = io.StringIO()
                         df.to_csv(csv_buffer, index=False, sep="|")
                         csv_bytes = csv_buffer.getvalue().encode("utf-8")
@@ -85,8 +98,8 @@ if password == os.getenv("APP_PASSWORD"):
                 except Exception as e:
                     st.error(f"Error de conexión o consulta: {e}")
                 finally:
-                    if conn:
-                        conn.close()
+                    if engine:
+                        engine.dispose()
 
 elif password != "":
     st.error("Contraseña incorrecta.")
