@@ -32,7 +32,8 @@ if password == os.getenv("APP_PASSWORD"):
                         user=os.getenv("DB_USER"),
                         password=os.getenv("DB_PASS"),
                         port=os.getenv("DB_PORT", "5432"),
-                        sslmode="require",
+                        sslmode="prefer",
+                        sslrootcert=None,
                         connect_timeout=10,
                     )
 
