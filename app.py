@@ -28,20 +28,17 @@ if password == os.getenv("APP_PASSWORD"):
                 tunnel = None
                 conn = None
                 try:
-                    # Datos SSH
                     ssh_host = os.getenv("SSH_HOST", "upgyms-iberia-sh.odoo.com")
                     ssh_user = os.getenv("SSH_USER", "4984370")
                     
-                    # Cargar clave privada desde Streamlit Secrets / Env
+                    # Carga compatible con Ed25519, RSA, ECDSA
                     ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
-                    pkey = paramiko.RSAKey.from_private_key(io.StringIO(ssh_key_string))
+                    pkey = paramiko.pkey.load_private_key(io.StringIO(ssh_key_string))
 
-                    # Datos BD
                     db_name = os.getenv("DB_NAME")
                     db_user = os.getenv("DB_USER")
                     db_pass = os.getenv("DB_PASS")
 
-                    # 1. Crear túnel SSH con la clave privada
                     tunnel = SSHTunnelForwarder(
                         (ssh_host, 22),
                         ssh_username=ssh_user,
@@ -50,7 +47,6 @@ if password == os.getenv("APP_PASSWORD"):
                     )
                     tunnel.start()
 
-                    # 2. Conectar a PostgreSQL localmente
                     conn = psycopg2.connect(
                         host="127.0.0.1",
                         port=tunnel.local_bind_port,
