@@ -26,16 +26,16 @@ if password == os.getenv("APP_PASSWORD"):
             with st.spinner("Extrayendo datos de Odoo..."):
                 conn = None
                 try:
-                    conn = psycopg2.connect(
-                        host=os.getenv("DB_HOST"),
-                        database=os.getenv("DB_NAME"),
-                        user=os.getenv("DB_USER"),
-                        password=os.getenv("DB_PASS"),
-                        port=os.getenv("DB_PORT", "5432"),
-                        sslmode="prefer",
-                        sslrootcert=None,
-                        connect_timeout=10,
-                    )
+                    # Conexión por URI replicando la cadena exacta de psql
+                    host = os.getenv("DB_HOST")
+                    port = os.getenv("DB_PORT", "5432")
+                    dbname = os.getenv("DB_NAME")
+                    user = os.getenv("DB_USER")
+                    password_db = os.getenv("DB_PASS")
+
+                    dsn = f"postgresql://{user}:{password_db}@{host}:{port}/{dbname}?sslmode=require"
+
+                    conn = psycopg2.connect(dsn, connect_timeout=15)
 
                     query = """
                     SELECT 
@@ -60,7 +60,6 @@ if password == os.getenv("APP_PASSWORD"):
                     ORDER BY aml.date ASC
                     """
 
-                    # Carga eficiente
                     df = pd.read_sql_query(query, conn, params=(start_date, end_date))
 
                     if df.empty:
@@ -68,7 +67,6 @@ if password == os.getenv("APP_PASSWORD"):
                             "No se encontraron apuntes contables en ese rango de fechas."
                         )
                     else:
-                        # Generación limpia del CSV en memoria
                         csv_buffer = io.StringIO()
                         df.to_csv(csv_buffer, index=False, sep="|")
                         csv_bytes = csv_buffer.getvalue().encode("utf-8")
