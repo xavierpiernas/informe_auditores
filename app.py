@@ -1,33 +1,15 @@
 import io
 import os
+import tempfile
 import pandas as pd
 import psycopg2
 from sshtunnel import SSHTunnelForwarder
 import streamlit as st
-import paramiko
 
 st.set_page_config(
     page_title="Informes Contables Odoo", page_icon="📊", layout="centered"
 )
 st.title("📊 Exportador de Apuntes Contables")
-
-
-def load_ssh_key(key_string):
-    """Prueba automáticamente los tipos de clave SSH válidos."""
-    for key_class in (
-        paramiko.Ed25519Key,
-        paramiko.RSAKey,
-        paramiko.ECDSAKey,
-        paramiko.DSSKey,
-    ):
-        try:
-            return key_class.from_private_key(io.StringIO(key_string))
-        except Exception:
-            pass
-    raise ValueError(
-        "No se pudo parsear la clave SSH. Verifica el formato en Streamlit Secrets."
-    )
-
 
 password = st.text_input("Contraseña de acceso:", type="password")
 
@@ -45,13 +27,18 @@ if password == os.getenv("APP_PASSWORD"):
             with st.spinner("Conectando por túnel SSH a Odoo.sh..."):
                 tunnel = None
                 conn = None
+                temp_key_file = None
                 try:
                     ssh_host = os.getenv("SSH_HOST", "upgyms-iberia-sh.odoo.com")
                     ssh_user = os.getenv("SSH_USER", "4984370")
-
-                    # Carga dinámica probando todos los formatos válidos
                     ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
-                    pkey = load_ssh_key(ssh_key_string)
+
+                    # Escribir clave temporal en disco para que sshtunnel la lea de forma nativa
+                    temp_key_file = tempfile.NamedTemporaryFile(
+                        delete=False, mode="w"
+                    )
+                    temp_key_file.write(ssh_key_string)
+                    temp_key_file.close()
 
                     db_name = os.getenv("DB_NAME")
                     db_user = os.getenv("DB_USER")
@@ -60,7 +47,7 @@ if password == os.getenv("APP_PASSWORD"):
                     tunnel = SSHTunnelForwarder(
                         (ssh_host, 22),
                         ssh_username=ssh_user,
-                        ssh_pkey=pkey,
+                        ssh_pkey=temp_key_file.name,
                         remote_bind_address=("127.0.0.1", 5432),
                     )
                     tunnel.start()
@@ -127,6 +114,8 @@ if password == os.getenv("APP_PASSWORD"):
                         conn.close()
                     if tunnel:
                         tunnel.stop()
+                    if temp_key_file and os.path.exists(temp_key_file.name):
+                        os.remove(temp_key_file.name)
 
 elif password != "":
     st.error("Contraseña incorrecta.")
