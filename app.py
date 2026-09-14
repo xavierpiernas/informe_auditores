@@ -4,6 +4,7 @@ import pandas as pd
 import psycopg2
 from sshtunnel import SSHTunnelForwarder
 import streamlit as st
+import paramiko
 
 st.set_page_config(
     page_title="Informes Contables Odoo", page_icon="📊", layout="centered"
@@ -23,29 +24,33 @@ if password == os.getenv("APP_PASSWORD"):
         if start_date > end_date:
             st.error("La fecha de inicio no puede ser posterior a la fecha fin.")
         else:
-            with st.spinner("Extrayendo datos de Odoo mediante SQL directo..."):
+            with st.spinner("Conectando por túnel SSH a Odoo.sh..."):
                 tunnel = None
                 conn = None
                 try:
-                    # Configurar variables de SSH y BD
-                    ssh_host = os.getenv("SSH_HOST")  # Ej: processcontroldev-fitnesspark-main-4984370.dev.odoo.com
-                    ssh_user = os.getenv("SSH_USER")  # Tu usuario SSH de Odoo.sh
-                    ssh_pass = os.getenv("SSH_PASS")  # Tu contraseña SSH (o clave)
+                    # Datos SSH
+                    ssh_host = os.getenv("SSH_HOST", "upgyms-iberia-sh.odoo.com")
+                    ssh_user = os.getenv("SSH_USER", "4984370")
+                    
+                    # Cargar clave privada desde Streamlit Secrets / Env
+                    ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
+                    pkey = paramiko.RSAKey.from_private_key(io.StringIO(ssh_key_string))
 
+                    # Datos BD
                     db_name = os.getenv("DB_NAME")
                     db_user = os.getenv("DB_USER")
                     db_pass = os.getenv("DB_PASS")
 
-                    # 1. Crear túnel SSH en segundo plano
+                    # 1. Crear túnel SSH con la clave privada
                     tunnel = SSHTunnelForwarder(
                         (ssh_host, 22),
                         ssh_username=ssh_user,
-                        ssh_password=ssh_pass,
+                        ssh_pkey=pkey,
                         remote_bind_address=("127.0.0.1", 5432),
                     )
                     tunnel.start()
 
-                    # 2. Conectar a PostgreSQL localmente a través del puerto asignado al túnel
+                    # 2. Conectar a PostgreSQL localmente
                     conn = psycopg2.connect(
                         host="127.0.0.1",
                         port=tunnel.local_bind_port,
