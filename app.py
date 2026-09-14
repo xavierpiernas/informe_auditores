@@ -33,11 +33,12 @@ if password == os.getenv("APP_PASSWORD"):
                     ssh_user = os.getenv("SSH_USER", "4984370")
                     ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
 
-                    # Escribir clave temporal en disco para que sshtunnel la lea de forma nativa
+                    # Archivo de clave privada en disco
                     temp_key_file = tempfile.NamedTemporaryFile(
                         delete=False, mode="w"
                     )
                     temp_key_file.write(ssh_key_string)
+                    temp_key_file.flush()
                     temp_key_file.close()
 
                     db_name = os.getenv("DB_NAME")
