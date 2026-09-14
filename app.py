@@ -1,9 +1,7 @@
 import io
 import os
-import tempfile
+import xmlrpc.client
 import pandas as pd
-import psycopg2
-from sshtunnel import SSHTunnelForwarder
 import streamlit as st
 
 st.set_page_config(
@@ -24,99 +22,109 @@ if password == os.getenv("APP_PASSWORD"):
         if start_date > end_date:
             st.error("La fecha de inicio no puede ser posterior a la fecha fin.")
         else:
-            with st.spinner("Conectando por túnel SSH a Odoo.sh..."):
-                tunnel = None
-                conn = None
-                temp_key_file = None
+            with st.spinner("Extrayendo datos de Odoo..."):
                 try:
-                    ssh_host = os.getenv("SSH_HOST", "upgyms-iberia-sh.odoo.com")
-                    ssh_user = os.getenv("SSH_USER", "4984370")
-                    ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
-
-                    # Archivo de clave privada en disco
-                    temp_key_file = tempfile.NamedTemporaryFile(
-                        delete=False, mode="w"
+                    url = os.getenv(
+                        "ODOO_URL",
+                        "https://processcontroldev-fitnesspark-main-4984370.dev.odoo.com",
                     )
-                    temp_key_file.write(ssh_key_string)
-                    temp_key_file.flush()
-                    temp_key_file.close()
+                    db = os.getenv("DB_NAME")
+                    username = os.getenv("DB_USER")
+                    pwd = os.getenv("DB_PASS")
 
-                    db_name = os.getenv("DB_NAME")
-                    db_user = os.getenv("DB_USER")
-                    db_pass = os.getenv("DB_PASS")
+                    # Conexión limpia mediante API HTTPS
+                    common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+                    uid = common.authenticate(db, username, pwd, {})
 
-                    tunnel = SSHTunnelForwarder(
-                        (ssh_host, 22),
-                        ssh_username=ssh_user,
-                        ssh_pkey=temp_key_file.name,
-                        remote_bind_address=("127.0.0.1", 5432),
-                    )
-                    tunnel.start()
-
-                    conn = psycopg2.connect(
-                        host="127.0.0.1",
-                        port=tunnel.local_bind_port,
-                        database=db_name,
-                        user=db_user,
-                        password=db_pass,
-                        sslmode="disable",
-                        connect_timeout=10,
-                    )
-
-                    query = """
-                    SELECT 
-                        aml.date AS fecha,
-                        aml.name AS etiqueta,
-                        am.name AS asiento,
-                        aa.code AS cuenta,
-                        aml.date_maturity AS fecha_vencimiento,
-                        aml.debit AS debe,
-                        aml.credit AS haber,
-                        aml.amount_currency AS importe_moneda,
-                        aml.balance AS saldo,
-                        aml.create_date AS fecha_creacion,
-                        rp.name AS usuario_creacion
-                    FROM account_move_line aml
-                    JOIN account_account aa ON aml.account_id = aa.id
-                    JOIN account_move am ON aml.move_id = am.id
-                    LEFT JOIN res_users ru ON aml.create_uid = ru.id
-                    LEFT JOIN res_partner rp ON ru.partner_id = rp.id
-                    WHERE aml.parent_state = 'posted'
-                    AND aml.date BETWEEN %s AND %s
-                    ORDER BY aml.date ASC
-                    """
-
-                    df = pd.read_sql_query(query, conn, params=(start_date, end_date))
-
-                    if df.empty:
-                        st.warning(
-                            "No se encontraron apuntes contables en ese rango de fechas."
-                        )
+                    if not uid:
+                        st.error("Error: Credenciales de Odoo incorrectas.")
                     else:
-                        csv_buffer = io.StringIO()
-                        df.to_csv(csv_buffer, index=False, sep="|")
-                        csv_bytes = csv_buffer.getvalue().encode("utf-8")
-
-                        st.success(
-                            f"¡Informe generado con éxito! Total registros: **{len(df):,}**"
+                        models = xmlrpc.client.ServerProxy(
+                            f"{url}/xmlrpc/2/object"
                         )
 
-                        st.download_button(
-                            label="⬇️ Descargar CSV para Auditores",
-                            data=csv_bytes,
-                            file_name=f"apuntes_contables_{start_date}_{end_date}.csv",
-                            mime="text/csv",
+                        domain = [
+                            ("parent_state", "=", "posted"),
+                            ("date", ">=", str(start_date)),
+                            ("date", "<=", str(end_date)),
+                        ]
+
+                        fields = [
+                            "date",
+                            "name",
+                            "move_id",
+                            "account_id",
+                            "date_maturity",
+                            "debit",
+                            "credit",
+                            "amount_currency",
+                            "balance",
+                            "create_date",
+                            "create_uid",
+                        ]
+
+                        records = models.execute_kw(
+                            db,
+                            uid,
+                            pwd,
+                            "account.move.line",
+                            "search_read",
+                            [domain],
+                            {"fields": fields, "order": "date asc"},
                         )
+
+                        if not records:
+                            st.warning("No se encontraron apuntes contables.")
+                        else:
+                            data = []
+                            for r in records:
+                                data.append(
+                                    {
+                                        "fecha": r.get("date"),
+                                        "etiqueta": r.get("name"),
+                                        "asiento": r["move_id"][1]
+                                        if r.get("move_id")
+                                        else "",
+                                        "cuenta": r["account_id"][1].split(" ")[
+                                            0
+                                        ]
+                                        if r.get("account_id")
+                                        else "",
+                                        "fecha_vencimiento": r.get(
+                                            "date_maturity"
+                                        ),
+                                        "debe": r.get("debit"),
+                                        "haber": r.get("credit"),
+                                        "importe_moneda": r.get(
+                                            "amount_currency"
+                                        ),
+                                        "saldo": r.get("balance"),
+                                        "fecha_creacion": r.get("create_date"),
+                                        "usuario_creacion": r["create_uid"][1]
+                                        if r.get("create_uid")
+                                        else "",
+                                    }
+                                )
+
+                            df = pd.DataFrame(data)
+
+                            csv_buffer = io.StringIO()
+                            df.to_csv(csv_buffer, index=False, sep="|")
+                            csv_bytes = csv_buffer.getvalue().encode("utf-8")
+
+                            st.success(
+                                f"¡Informe generado! Registros: **{len(df):,}**"
+                            )
+
+                            st.download_button(
+                                label="⬇️ Descargar CSV",
+                                data=csv_bytes,
+                                file_name=f"apuntes_contables_{start_date}_{end_date}.csv",
+                                mime="text/csv",
+                            )
 
                 except Exception as e:
-                    st.error(f"Error de conexión o consulta: {e}")
-                finally:
-                    if conn:
-                        conn.close()
-                    if tunnel:
-                        tunnel.stop()
-                    if temp_key_file and os.path.exists(temp_key_file.name):
-                        os.remove(temp_key_file.name)
+                    st.error(f"Error: {e}")
 
 elif password != "":
     st.error("Contraseña incorrecta.")
