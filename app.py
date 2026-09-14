@@ -11,9 +11,8 @@ st.title("📊 Exportador de Apuntes Contables")
 
 # Autenticación simple
 password = st.text_input("Contraseña de acceso:", type="password")
-app_password = os.getenv("APP_PASSWORD")
 
-if password and password == app_password:
+if password == os.getenv("APP_PASSWORD"):
     col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("Fecha Inicio")
@@ -27,16 +26,13 @@ if password and password == app_password:
             with st.spinner("Extrayendo datos de Odoo..."):
                 conn = None
                 try:
-                    # Conexión directa con psycopg2 desactivando SSL explícitamente (igual que psql local)
                     conn = psycopg2.connect(
                         host=os.getenv("DB_HOST"),
                         database=os.getenv("DB_NAME"),
                         user=os.getenv("DB_USER"),
                         password=os.getenv("DB_PASS"),
                         port=os.getenv("DB_PORT", "5432"),
-                        sslmode="disable",
-                        keepalives=1,
-                        keepalives_idle=30,
+                        sslmode="require",
                         connect_timeout=10,
                     )
 
@@ -63,6 +59,7 @@ if password and password == app_password:
                     ORDER BY aml.date ASC
                     """
 
+                    # Carga eficiente
                     df = pd.read_sql_query(query, conn, params=(start_date, end_date))
 
                     if df.empty:
@@ -70,6 +67,7 @@ if password and password == app_password:
                             "No se encontraron apuntes contables en ese rango de fechas."
                         )
                     else:
+                        # Generación limpia del CSV en memoria
                         csv_buffer = io.StringIO()
                         df.to_csv(csv_buffer, index=False, sep="|")
                         csv_bytes = csv_buffer.getvalue().encode("utf-8")
