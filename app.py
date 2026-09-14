@@ -1,5 +1,6 @@
 import io
 import os
+import time
 import xmlrpc.client
 import pandas as pd
 import streamlit as st
@@ -60,7 +61,7 @@ if password == os.getenv("APP_PASSWORD"):
                         "create_uid",
                     ]
 
-                    # 1. Obtener total de registros a extraer
+                    # 1. Obtener total de registros
                     with st.spinner("Contando registros a descargar..."):
                         total_count = models.execute_kw(
                             db, uid, pwd, "account.move.line", "search_count", [domain]
@@ -69,21 +70,20 @@ if password == os.getenv("APP_PASSWORD"):
                     if total_count == 0:
                         st.warning("No se encontraron apuntes contables en ese rango.")
                     else:
-                        st.info(f"Registros a procesar: **{total_count:,}**")
-                        
+                        st.info(f"Registros totales a procesar: **{total_count:,}**")
+
                         progress_bar = st.progress(0)
                         status_text = st.empty()
 
                         all_records = []
-                        limit = 500  # Lotes pequeños para evitar el Bad Gateway (502)
+                        limit = 2000  # Subimos lote para más velocidad
                         offset = 0
 
-                        # 2. Extracción paginada ultra estable
-                        while offset < total_count:
-                            status_text.markdown(
-                                f"⏳ **Descargando registros:** {len(all_records):,} / {total_count:,}..."
-                            )
+                        # Inicio del cronómetro
+                        start_time = time.time()
 
+                        # 2. Bucle de descarga con cálculo de tiempo restante
+                        while offset < total_count:
                             batch = models.execute_kw(
                                 db,
                                 uid,
@@ -104,14 +104,33 @@ if password == os.getenv("APP_PASSWORD"):
 
                             all_records.extend(batch)
                             offset += limit
-                            
-                            # Actualizar barra de progreso
-                            prog_val = min(1.0, len(all_records) / total_count)
+
+                            # Métrica de tiempo y velocidad
+                            elapsed_time = time.time() - start_time
+                            downloaded_count = len(all_records)
+                            records_per_sec = downloaded_count / elapsed_time if elapsed_time > 0 else 0
+
+                            # Estimación por regla de tres de lo que falta
+                            remaining_records = total_count - downloaded_count
+                            remaining_seconds = remaining_records / records_per_sec if records_per_sec > 0 else 0
+
+                            # Formato legible (Minutos y Segundos)
+                            mins, secs = divmod(int(remaining_seconds), 60)
+                            time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+
+                            # Feedback dinámico
+                            status_text.markdown(
+                                f"⏳ **Descargando:** `{downloaded_count:,}` / `{total_count:,}` registros "
+                                f"| ⚡ `{records_per_sec:.0f} reg/s` "
+                                f"| ⏱️ **Tiempo restante:** ~`{time_str}`"
+                            )
+
+                            prog_val = min(1.0, downloaded_count / total_count)
                             progress_bar.progress(prog_val)
 
-                        status_text.text("Generando archivo CSV...")
+                        status_text.text("⚙️ Generando archivo CSV...")
 
-                        # 3. Mapeo de datos
+                        # 3. Mapeo final
                         data = []
                         for r in all_records:
                             data.append(
@@ -139,7 +158,12 @@ if password == os.getenv("APP_PASSWORD"):
                         status_text.empty()
                         progress_bar.empty()
 
-                        st.success(f"¡Exportación completada! Total: **{len(df):,}** registros.")
+                        total_duration = int(time.time() - start_time)
+                        tot_mins, tot_secs = divmod(total_duration, 60)
+
+                        st.success(
+                            f"¡Completado en **{tot_mins}m {tot_secs}s**! Total: **{len(df):,}** registros."
+                        )
 
                         st.download_button(
                             label="⬇️ Descargar CSV para Auditores",
