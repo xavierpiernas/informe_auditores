@@ -76,7 +76,8 @@ if password == os.getenv("APP_PASSWORD"):
                         status_text = st.empty()
 
                         all_records = []
-                        limit = 2000  # Subimos lote para más velocidad
+                        # Obtener tamaño de lote desde Secrets (3000 por defecto)
+                        limit = int(os.getenv("BATCH_SIZE", 3000))
                         offset = 0
 
                         # Inicio del cronómetro
