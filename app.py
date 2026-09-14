@@ -1,8 +1,8 @@
 import io
 import os
 import pandas as pd
-import psycopg2
 import streamlit as st
+from sqlalchemy import create_engine
 
 st.set_page_config(
     page_title="Informes Contables Odoo", page_icon="📊", layout="centered"
@@ -24,18 +24,21 @@ if password == os.getenv("APP_PASSWORD"):
             st.error("La fecha de inicio no puede ser posterior a la fecha fin.")
         else:
             with st.spinner("Extrayendo datos de Odoo..."):
-                conn = None
+                engine = None
                 try:
-                    # Conexión por URI replicando la cadena exacta de psql
                     host = os.getenv("DB_HOST")
                     port = os.getenv("DB_PORT", "5432")
                     dbname = os.getenv("DB_NAME")
                     user = os.getenv("DB_USER")
                     password_db = os.getenv("DB_PASS")
 
-                    dsn = f"postgresql://{user}:{password_db}@{host}:{port}/{dbname}?sslmode=require"
+                    # Cadena URI exacta con SSL que SQLAlchemy entiende sin lanzar Warnings
+                    db_url = f"postgresql://{user}:{password_db}@{host}:{port}/{dbname}?sslmode=require"
 
-                    conn = psycopg2.connect(dsn, connect_timeout=15)
+                    engine = create_engine(
+                        db_url,
+                        connect_args={"connect_timeout": 10},
+                    )
 
                     query = """
                     SELECT 
@@ -60,7 +63,8 @@ if password == os.getenv("APP_PASSWORD"):
                     ORDER BY aml.date ASC
                     """
 
-                    df = pd.read_sql_query(query, conn, params=(start_date, end_date))
+                    # Carga limpia usando Engine (elimina el UserWarning)
+                    df = pd.read_sql_query(query, engine, params=(start_date, end_date))
 
                     if df.empty:
                         st.warning(
@@ -85,8 +89,8 @@ if password == os.getenv("APP_PASSWORD"):
                 except Exception as e:
                     st.error(f"Error de conexión o consulta: {e}")
                 finally:
-                    if conn:
-                        conn.close()
+                    if engine:
+                        engine.dispose()
 
 elif password != "":
     st.error("Contraseña incorrecta.")
