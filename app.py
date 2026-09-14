@@ -11,6 +11,24 @@ st.set_page_config(
 )
 st.title("📊 Exportador de Apuntes Contables")
 
+
+def load_ssh_key(key_string):
+    """Prueba automáticamente los tipos de clave SSH válidos."""
+    for key_class in (
+        paramiko.Ed25519Key,
+        paramiko.RSAKey,
+        paramiko.ECDSAKey,
+        paramiko.DSSKey,
+    ):
+        try:
+            return key_class.from_private_key(io.StringIO(key_string))
+        except Exception:
+            pass
+    raise ValueError(
+        "No se pudo parsear la clave SSH. Verifica el formato en Streamlit Secrets."
+    )
+
+
 password = st.text_input("Contraseña de acceso:", type="password")
 
 if password == os.getenv("APP_PASSWORD"):
@@ -30,10 +48,10 @@ if password == os.getenv("APP_PASSWORD"):
                 try:
                     ssh_host = os.getenv("SSH_HOST", "upgyms-iberia-sh.odoo.com")
                     ssh_user = os.getenv("SSH_USER", "4984370")
-                    
-                    # Carga compatible con Ed25519, RSA, ECDSA
+
+                    # Carga dinámica probando todos los formatos válidos
                     ssh_key_string = os.getenv("SSH_PRIVATE_KEY")
-                    pkey = paramiko.pkey.load_private_key(io.StringIO(ssh_key_string))
+                    pkey = load_ssh_key(ssh_key_string)
 
                     db_name = os.getenv("DB_NAME")
                     db_user = os.getenv("DB_USER")
@@ -83,13 +101,17 @@ if password == os.getenv("APP_PASSWORD"):
                     df = pd.read_sql_query(query, conn, params=(start_date, end_date))
 
                     if df.empty:
-                        st.warning("No se encontraron apuntes contables en ese rango de fechas.")
+                        st.warning(
+                            "No se encontraron apuntes contables en ese rango de fechas."
+                        )
                     else:
                         csv_buffer = io.StringIO()
                         df.to_csv(csv_buffer, index=False, sep="|")
                         csv_bytes = csv_buffer.getvalue().encode("utf-8")
 
-                        st.success(f"¡Informe generado con éxito! Total registros: **{len(df):,}**")
+                        st.success(
+                            f"¡Informe generado con éxito! Total registros: **{len(df):,}**"
+                        )
 
                         st.download_button(
                             label="⬇️ Descargar CSV para Auditores",
