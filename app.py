@@ -26,11 +26,11 @@ if password == os.getenv("APP_PASSWORD"):
                 try:
                     url = os.getenv(
                         "ODOO_URL",
-                        "https://processcontroldev-fitnesspark-main-4984370.dev.odoo.com",
+                        "https://upgyms-iberia-sh.odoo.com",
                     )
                     db = os.getenv("DB_NAME")
-                    username = os.getenv("DB_USER")
-                    pwd = os.getenv("DB_PASS")
+                    username = os.getenv("ODOO_USER")
+                    pwd = os.getenv("ODOO_PASS")
 
                     # Conexión limpia mediante API HTTPS
                     common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
